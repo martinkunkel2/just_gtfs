@@ -1158,7 +1158,8 @@ using Agencies = std::vector<Agency>;
 using Stops = std::vector<Stop>;
 using Routes = std::vector<Route>;
 using Trips = std::vector<Trip>;
-using StopTimes = std::vector<StopTime>;
+using StopTimes = std::map< Id, std::vector<StopTime> >;
+using StopTimesPlain = std::vector<StopTime>;
 using Calendar = std::vector<CalendarItem>;
 using CalendarDates = std::vector<CalendarDate>;
 
@@ -1217,8 +1218,8 @@ public:
   inline Result write_stop_times(const std::string & gtfs_path) const;
 
   inline const StopTimes & get_stop_times() const;
-  inline StopTimes get_stop_times_for_stop(const Id & stop_id) const;
-  inline StopTimes get_stop_times_for_trip(const Id & trip_id, bool sort_by_sequence = true) const;
+  inline StopTimesPlain get_stop_times_for_stop(const Id & stop_id) const;
+  inline StopTimesPlain get_stop_times_for_trip(const Id & trip_id, bool sort_by_sequence = true) const;
   inline void add_stop_time(const StopTime & stop_time);
 
   inline Result read_calendar();
@@ -1708,7 +1709,7 @@ inline Result Feed::add_stop_time(const ParsedCsvRow & row)
   // Optional fields:
   stop_time.stop_headsign = get_value_or_default(row, "stop_headsign");
 
-  stop_times.emplace_back(stop_time);
+  stop_times[stop_time.trip_id].emplace_back(stop_time);
   return ResultCode::OK;
 }
 
@@ -2265,25 +2266,27 @@ inline Result Feed::write_stop_times(const std::string & gtfs_path) const
 
 inline const StopTimes & Feed::get_stop_times() const { return stop_times; }
 
-inline StopTimes Feed::get_stop_times_for_stop(const Id & stop_id) const
+inline StopTimesPlain Feed::get_stop_times_for_stop(const Id & stop_id) const
 {
-  StopTimes res;
-  for (const auto & stop_time : stop_times)
+  StopTimesPlain res;
+  for (auto it = stop_times.begin(); it != stop_times.end(); it++)
   {
-    if (stop_time.stop_id == stop_id)
-      res.emplace_back(stop_time);
+    for (const auto & stop_time : it->second)
+    {
+      if (stop_time.stop_id == stop_id)
+        res.emplace_back(stop_time);
+    }
   }
   return res;
 }
 
-inline StopTimes Feed::get_stop_times_for_trip(const Id & trip_id, bool sort_by_sequence) const
+inline StopTimesPlain Feed::get_stop_times_for_trip(const Id & trip_id, bool sort_by_sequence) const
 {
-  StopTimes res;
-  for (const auto & stop_time : stop_times)
-  {
-    if (stop_time.trip_id == trip_id)
-      res.emplace_back(stop_time);
-  }
+  StopTimesPlain res;
+  auto it = stop_times.find(trip_id);
+  if (it == stop_times.end())
+    return res;
+  res = it->second;
   if (sort_by_sequence)
   {
     std::sort(res.begin(), res.end(), [](const StopTime & t1, const StopTime & t2) {
@@ -2293,7 +2296,10 @@ inline StopTimes Feed::get_stop_times_for_trip(const Id & trip_id, bool sort_by_
   return res;
 }
 
-inline void Feed::add_stop_time(const StopTime & stop_time) { stop_times.emplace_back(stop_time); }
+inline void Feed::add_stop_time(const StopTime & stop_time) 
+{ 
+  stop_times[stop_time.trip_id].emplace_back(stop_time); 
+}
 
 inline Result Feed::read_calendar()
 {
@@ -2718,22 +2724,25 @@ inline void Feed::write_stops(std::ofstream & out) const
 
 inline void Feed::write_stop_times(std::ofstream & out) const
 {
-  for (const auto & stop_time : stop_times)
+  for (auto it = stop_times.begin(); it != stop_times.end(); ++it)
   {
-    std::vector<std::string> fields{wrap(stop_time.trip_id),
-                                    stop_time.arrival_time.get_raw_time(),
-                                    stop_time.departure_time.get_raw_time(),
-                                    wrap(stop_time.stop_id),
-                                    wrap(stop_time.stop_sequence),
-                                    wrap(stop_time.stop_headsign),
-                                    wrap(stop_time.pickup_type),
-                                    wrap(stop_time.drop_off_type),
-                                    "" /* continuous_pickup */,
-                                    "" /* continuous_drop_off */,
-                                    wrap(stop_time.shape_dist_traveled),
-                                    wrap(stop_time.timepoint)};
-    // TODO: handle new stop_times fields.
-    write_joined(out, std::move(fields));
+    for (const auto & stop_time : it->second)
+    {
+      std::vector<std::string> fields{wrap(stop_time.trip_id),
+                                      stop_time.arrival_time.get_raw_time(),
+                                      stop_time.departure_time.get_raw_time(),
+                                      wrap(stop_time.stop_id),
+                                      wrap(stop_time.stop_sequence),
+                                      wrap(stop_time.stop_headsign),
+                                      wrap(stop_time.pickup_type),
+                                      wrap(stop_time.drop_off_type),
+                                      "" /* continuous_pickup */,
+                                      "" /* continuous_drop_off */,
+                                      wrap(stop_time.shape_dist_traveled),
+                                      wrap(stop_time.timepoint)};
+      // TODO: handle new stop_times fields.
+      write_joined(out, std::move(fields));
+    }
   }
 }
 
